@@ -5,18 +5,32 @@ reads -- the remaining fields from the real project's combined
 `nova_poster_enrich.py` call that this port hasn't isolated into their own
 gate yet.
 
-`face_count` (PENDING -- not in the real project's original prompt, added
-here and not yet live-verified): a third opinion on how many real human
-faces are on a poster, next to `faces_n_faces` (YuNet, local/free) and
-`rek_n_faces` (Rekognition, `26_rekognition_enrich.py`). Added after a
-real finding on 21 high-disagreement posters (blind human review, see
-docs/RESULTS.md): YuNet and Rekognition often disagree sharply on crowded/
-collage posters, and the *higher* of the two is usually (not always) the
-one closer to a real human count -- both engines tend to undercount, not
-invent faces. Whether Nova adds real value here (a third read, or the
-tiebreaker when YuNet/Rekognition disagree) is an open question this
-field exists to answer once this script has a real AWS run -- scored the
-same way as everything else in this repo, not assumed.
+`face_count` (RESOLVED, ahead of this script's own AWS run -- see below):
+a third opinion on how many real human faces are on a poster, next to
+`faces_n_faces` (YuNet, local/free) and `rek_n_faces` (Rekognition,
+`26_rekognition_enrich.py`). YuNet and Rekognition often disagree sharply
+on crowded/collage posters, and on the most extreme disagreements the
+*higher* of the two is usually (not always) closer to the truth -- both
+engines tend to undercount, not invent faces (see docs/RESULTS.md, two
+documented counter-examples: *Opus Sanguinis*, *Beringin*).
+
+Whether Nova adds real value here was an open question until the
+private project's own `data/qa/qa_faces.csv` was found -- Nova's face
+count already run at full corpus scale (131,037 posters) years before
+this reconciliation effort, just never checked against a human. A first
+look (corpus-wide averages, plus the two known counter-examples above,
+where Nova matched YuNet's overcounting error both times) suggested Nova
+might be a *worse* overcounter than either existing engine -- but that
+was only 2 real data points. A properly powered 34-poster human recount
+(stratified across the high-disagreement subset) reversed it: **Nova is
+the most accurate of the three** (47.1% exact match / MAE 1.88, vs.
+YuNet's 20.6%/4.00 and Rekognition's 14.7%/2.71). One real
+counter-example survives (id 1015715, human count 0: YuNet correctly
+said 0, both Rekognition *and* Nova hallucinated faces) -- Nova wins
+most often, not always. See docs/RESULTS.md's face-count reconciliation
+for the full numbers. **This field is worth keeping and trusting as the
+primary face-count signal once this script has a real AWS run** -- not
+an open question anymore, a validated one.
 
 `poster_qa_verdict`/`poster_qa_reason` (PENDING -- also not in the real
 project's original prompt, also not yet live-verified): asks whether the

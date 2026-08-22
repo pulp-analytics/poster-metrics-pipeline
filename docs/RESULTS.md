@@ -657,16 +657,58 @@ localization.** All the numbers above (here and in every other signal in
 this document) answer "is there a weapon/animal/monster," a yes/no
 question. They say nothing about whether a given engine's *bounding box*
 correctly locates that weapon in the image -- a different, still-untested
-axis. Nova cannot help with this at all (a text/JSON-out LLM has no
-mechanism for reliable pixel localization, the same structural gap
-documented for `rek_n_boxes` in `27_nova_scene_enrich.py`'s docstring).
-If the downstream need is marking or cropping the weapon's actual
-location, not just flagging its presence, the candidates are
-`rek_label_boxes` (`26_rekognition_enrich.py`) or OWLv2's own boxes
-(`weapon_owlv2_top_label`/`_top_score` and the full box list in
-`creature_weapon_owlv2.csv`) -- and which of those localizes *correctly*,
-given a real weapon is present, is a real, separate reconciliation
-question this document hasn't answered yet.
+axis at the time this correction was written. Nova cannot produce
+coordinates itself (a text/JSON-out LLM has no mechanism for reliable
+pixel localization, the same structural gap documented for `rek_n_boxes`
+in `27_nova_scene_enrich.py`'s docstring) -- but it turns out it *can*
+verify someone else's box, and that verification is trustworthy. See the
+next section.
+
+### Weapon box localization: is OWLv2's box actually placed correctly?
+
+A separate question from everything above: given a real weapon exists,
+does OWLv2's *bounding box* actually locate it, or just correctly flag
+that one exists somewhere on the poster? The private project already ran
+this exact check at full corpus scale, years before this reconciliation
+effort -- `data/qa/qa_creature_weapon_boxes.csv` (not ported to this
+repo, but real, live-computed data): Nova Pro shown each OWLv2 box drawn
+on its poster, asked whether the box actually contains the object OWLv2
+claimed. 254,177 rows total (170,984 creature, 83,193 weapon), verdicts
+`correct`/`false_positive`/`uncertain`. Real and useful, but still a
+model reviewing a model -- never checked against a human before now.
+
+**60-poster blind review** (weapon only, box drawn on the actual poster
+image, Nova's verdict hidden -- 25 sampled from Nova's "correct," 25 from
+"false_positive," 10 from "uncertain"; 55 scored after dropping "not
+sure," 31 real "yes, the box is correct"):
+
+| Nova's own verdict on the box | n | human agrees box is correct |
+|---|---:|---:|
+| "correct" | 24 | 83.3% |
+| "false_positive" | 23 | 17.4% (i.e. 82.6% agreement it's genuinely wrong) |
+| "uncertain" | 8 | **87.5%** |
+
+Treating Nova's verdict as a binary predictor (correct = trust the box,
+false_positive = don't) scores 72.7% accuracy against real human
+judgment. But folding "uncertain" into "trust it" instead of treating it
+as a rejection scores noticeably better: **83.6% accuracy / 84.4%
+precision / 87.1% recall** -- Nova is more cautious than it needs to be
+when it hedges; humans usually still see a correct box under an
+"uncertain" call. OWLv2's own detection score also correlates with real
+correctness (mean 0.38 for boxes humans confirmed vs. 0.29 for boxes they
+rejected, with overlap -- a real but weak signal on its own).
+
+**Conclusion: Nova-as-box-verifier is a real, usable filter, not just a
+plausible-sounding proxy** -- the first time in this document that a
+"model reviewing a model" step has been checked against human ground
+truth and held up. If the downstream need is marking or cropping the
+weapon's actual location (not just flagging presence, which Rekognition +
+Nova already answers better -- see above), the practical rule is:
+**OWLv2's box, kept if Nova's review says "correct" or "uncertain,"
+discarded if "false_positive."** This is specific to weapon on OWLv2's
+boxes; it has not been tested for creature/monster boxes (170,984 rows in
+the same source file, untested), for DINO's boxes, or for
+`rek_label_boxes` once that field has a real AWS run.
 
 ### Water: another signal with no deterministic partner
 
@@ -755,6 +797,48 @@ or not" verdict, since the answer differs by field:
   signal once the call is already happening for other reasons (a
   `max(faces_n_faces, rek_n_faces)` rule beats either alone on the
   disagreement tail).
+
+**Update -- Nova's own face count, resolved.** `27_nova_scene_enrich.py`'s
+`nova_face_count` field was added and left marked PENDING, an open
+question about whether Nova adds real value as a third opinion. Two
+things closed that gap without a new AWS call: the private project's
+`data/qa/qa_faces.csv` already ran Nova's own independent face count
+against every poster (131,037 rows) years before this reconciliation
+effort -- real, live data, just never checked against a human until now
+(its own column naming is misleading: it's labeled `rek_n_faces` but is
+actually loaded from `faces_v2*.csv`, i.e. YuNet, a real bug in that
+private script -- the genuine Rekognition count has to come from
+`master_dataset.csv` separately). Corpus-wide, on the 3,497-poster
+subset where YuNet and Rekognition disagree by 3+ faces, Nova exceeds
+*both* 27.4% of the time and its own mean count (1.99) is higher than
+either engine's -- worrying on its face, and the two known
+counter-examples above (Opus Sanguinis, Beringin) both showed Nova
+matching YuNet's overcounting error, not Rekognition's correct one. That
+looked like a real negative signal, but it was only 2 data points.
+
+A properly powered **34-poster human recount** (stratified across that
+same disagreement subset: 15 where Nova exceeds both engines, 10 where it
+matches the higher, 10 the lower, 5 in between) reversed it:
+
+| engine | exact match | MAE | mean bias |
+|---|---:|---:|---:|
+| YuNet | 20.6% | 4.00 | -3.94 (undercounts badly) |
+| Rekognition | 14.7% | 2.71 | -1.24 |
+| **Nova** | **47.1%** | **1.88** | -1.06 |
+
+Per-poster, Nova is the closest engine 10 times, Rekognition 9, YuNet 1,
+14 ties. **Nova is the best single engine for face count on the hardest
+subset** -- the 2-example anecdote pointed the wrong way; `max(yunet,
+rek, nova)` edges out Nova alone on MAE (1.56) at the cost of exact-match
+rate (38.2%), so either is defensible depending on whether the downstream
+use cares more about getting the exact number right or minimizing average
+error. One real counter-example survives even in the good news: id
+1015715 (*What Kills Gets Killed*, human count 0) had YuNet correctly say
+0 while **both** Rekognition (7) and Nova (8) hallucinated faces --
+proof this isn't "Nova always wins," just "Nova wins most often on this
+population." **Verdict: `nova_face_count` is no longer pending --
+Nova (`27`) is the recommended face-count signal**, with YuNet/Rekognition
+as free secondary reads, not the other way around.
 
 **No competitor exists to test against at all:**
 - `rek_sharp`, `rek_contrast` -- confirmed via a full search of the
