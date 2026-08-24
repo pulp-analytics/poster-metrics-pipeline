@@ -971,10 +971,140 @@ one. This cuts the manual review load for the CJK-heavy remainder of the
 census substantially, concentrated exactly where Nova's own reliability
 was already shown to be worst.
 
-The full census (all 4,879 `no_title_on_poster` ids resolved to a
-verdict, ground truth + all rounds + the CJK rescue) was still in
-progress at the time of this writing -- see `data/ground_truth/` for the
-current consolidated state once complete.
+**The full census is now complete**: all 4,879 `no_title_on_poster` ids
+resolved to a verdict -- the original 1,904-poster ground-truth overlap +
+428 PaddleOCR CJK auto-rescues + 2,547 posters of fresh blind human
+review across 8 rounds + the 277-poster CJK leftover PaddleOCR couldn't
+confirm, `drop_duplicates` verified against the full 4,879-id universe
+(zero gaps, zero duplicates). Final breakdown: **3,650 `no_es_poster`
+(74.8%), 1,202 `es_poster` (24.6%), 26 `no_seguro` (0.5%)** -- almost
+identical to the original ground truth's 73.1% `no_es_poster` rate,
+confirming that estimate was directionally right all along once the
+CJK/language bias documented above is corrected for on the rest of the
+corpus. (Consolidated result held outside version control pending a
+decision on final storage location -- not yet committed to
+`data/ground_truth/`.)
+
+### Which OCR is actually free to lean on -- pure detectors vs. vision-LLM judgment
+
+The census above fixes the `no_title_on_poster` universe (4,879 ids), but
+the strategy question behind it is bigger: **what should this repo run,
+going forward, to decide "does this poster have visible text" at all
+145,492-poster scale**, not just for ids Nova already flagged?
+
+First split the tool landscape into two real categories, which had been
+getting blurred:
+
+| | pure OCR (detects/transcribes, no judgment) | vision-LLM (reads *and* judges match) |
+|---|---|---|
+| engines | Rekognition DetectText, AWS Textract, EasyOCR, PaddleOCR | Nova, Pixtral, gpt4o, gemini-flash |
+| already run at scale | Rekognition + Textract: full corpus + genre variants. EasyOCR: horror-only "core" (37,830 rows) | Nova: full corpus (`title_ocr_qa_verdict`). Pixtral: attempted full-corpus, see below |
+| cost/limits | free after the API call, no LLM rate limits | pay per call, subject to Bedrock throttling |
+
+**None of the three already-run pure OCR engines can read non-Latin
+script.** Rekognition DetectText and Textract's DetectDocumentText are
+both documented by AWS as Latin-script-only. EasyOCR's own library
+supports far more, but this repo's own `poster_ocr.py:60` initializes it
+`easyocr.Reader(["en"], ...)` -- English-only by configuration, not by
+the library's limit. That's the real, mechanical root cause behind the
+language bias above: the corpus's baseline OCR was never capable of
+reading CJK (or Cyrillic, Devanagari, Tamil, Thai, Arabic, Telugu...) to
+begin with, so any downstream verdict built on it inherits the gap.
+
+**A large asset was sitting unused: Pixtral had already been run across
+most of the corpus** (`data/full_corpus_pixtral_ocr_backup/`, 131,644
+unique ids), but 117,356 of those (89.1%) are `ThrottlingException`
+failures from Bedrock, not real verdicts -- **only 14,288 ids (9.8% of
+the corpus) have an actual Pixtral read**, not the ~90% it first looked
+like. Validated anyway, on what's real: a 365-poster full population
+(every id where Pixtral itself claimed `no_title_on_poster`) plus a
+200-poster power sample (100 ja + 100 zh, drawn from Pixtral's
+match/mismatch verdicts, blind human review both times). Pixtral's error
+concentrates almost entirely in its own `no_title_on_poster` bucket
+(2-4% of its verdicts) and is near-zero elsewhere:
+
+| Pixtral says... | n reviewed | % text confirmed present |
+|---|---:|---:|
+| match / mismatch (read something) | 200 | 99.5% |
+| `no_title_on_poster` | 42 | ~70% (ja 70.3%, zh n=5, underpowered) |
+
+Cross-referencing Pixtral's `no_title_on_poster` calls against Nova's
+own verdict on the same ids sharpens this further -- the same
+two-independent-models-agreeing pattern validated earlier for weapon-box
+localization holds here too:
+
+| Nova also says no title? | n | Pixtral wrong (real text found) |
+|---|---:|---:|
+| yes (both agree) | 291 | 3.4% |
+| no (Nova disagreed) | 74 | 54.1% |
+
+**PaddleOCR's real language coverage**, read directly from the installed
+`paddleocr==3.7.0` source (`_pipelines/ocr.py`, `_utils/langs.py`), not
+assumed: `ja`/`zh`/`chinese_cht`/`en` run PP-OCRv6 directly; `ko`, `ru`
+(cyrillic group), `hi` (devanagari group), `ar` (arabic group), `ta`,
+`te`, `th` all fall back to PP-OCRv5 with a dedicated per-language
+recognition model (different `lang=` init than the CJK call, not a
+drop-in swap). **`ml` (Malayalam) and `bn` (Bengali) have no language
+mapping in this library at all** -- neither PP-OCRv6 nor its v5/v3
+fallbacks cover them.
+
+**The scoring metric has to match the script, or the number is wrong in
+either direction.** Two real bugs surfaced building this out:
+
+1. Character-set overlap (the scorer validated for CJK, `overlap_score`
+   in `rescue_cjk_with_paddleocr.py`) is case-sensitive by construction --
+   fine for CJK (no case), silently wrong for Cyrillic (title-case
+   `original_title` vs. all-caps OCR output scored 0.0 on near-perfect
+   reads).
+2. Even case-fixed, character-set overlap is the *wrong metric for
+   alphabetic scripts*: Cyrillic has only 33 letters, so any OCR block
+   longer than a sentence contains nearly all of them by chance,
+   regardless of whether the actual title appears -- a 40-poster Russian
+   spot-check scored a false 72.2% this way (`Призрак бродит по Европе`
+   scored 1.0 despite never appearing in the detected text). The
+   opposite is true for CJK: thousands of possible ideographs make
+   char-overlap reliable there, while substring/fuzzy matching
+   (`SequenceMatcher`, the method that's correct for alphabetic scripts)
+   scores *worse* on CJK (25.7% vs. 60.7%) because vertical/non-linear
+   poster layouts scramble OCR reading order, breaking contiguous-match
+   assumptions that don't apply to CJK's non-linear text anyway.
+   **The correct scorer is script-family-dependent: char-overlap for
+   CJK, fuzzy/substring (adapted from the private pipeline's own
+   `title_fuzzy_score`/`title_hit`, alnum-normalized per script) for
+   alphabetic and abugida scripts.**
+
+**A poster's real title can legitimately live in more than one place.**
+Scoring against `original_title` alone systematically undercounts —
+international/AKA titles (this repo's own `title` column, plus IMDb's
+`title.akas.tsv.gz`, 58.6M rows, filtered to this corpus's `imdb_id`s)
+are frequently what's actually printed on the poster, especially for
+non-English-original cinema marketed abroad:
+
+| language | n | PaddleOCR hit, `original_title` only | + international title + AKAs |
+|---|---:|---:|---:|
+| ko | 40 | 25.0% | **75.0%** |
+| ja/zh (CJK, char-overlap method) | 705 | 60.7% | **61.8%** |
+| hi | 40 | 27.5% | **60.0%** |
+| ta | 40 | 22.5% | **45.0%** |
+| ru | 40 | 27.5% | **42.5%** |
+| ar | 40 | 25.0% | **40.0%** |
+| th | 40 | 5.0% | **35.0%** |
+| te | 40 | 15.0% | **35.0%** |
+
+Korean and Thai show the largest jumps (3-7x) -- both markets frequently
+ship posters with the English/international marketing title rather than
+the native-script one, which a single-title scorer would misread as
+"PaddleOCR failed" rather than "the poster genuinely shows a different,
+also-correct title." The 8 CJK ids the AKA cross-reference newly
+rescued were checked against the completed human census: **8/8 already
+carried a human `es_poster` verdict** -- a clean, independent
+confirmation that the AKA-augmented method adds real signal, not noise.
+
+`ml` and `bn` remain untested -- PaddleOCR has no language mapping for
+either; Tesseract (already installed, `tesseract --list-langs` shows
+only `eng` currently, but official `mal`/`ben` trained-data packs exist
+and aren't yet installed) is the next free option to try before
+reaching for a paid multi-language API like Google Cloud Vision.
 
 **Net**: if the only reason to call Rekognition were presence-detection
 signals (animal/weapon/monster/water) or color/face-count, it would not
