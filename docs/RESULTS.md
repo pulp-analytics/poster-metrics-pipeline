@@ -902,6 +902,80 @@ Separately: the same "is this even a poster" ground truth mentioned above
 (see that script's docstring) only need to cover the other 3,011 plus the
 rest of the corpus, not re-answer what's already answered.
 
+### Poster type census: a real language bias in Nova's own title reading
+
+Extending that ground truth to a full census (not a sample -- every one
+of the corpus's 4,879 `no_title_on_poster` ids needs an actual verdict,
+so downstream work can genuinely exclude non-poster images, not just
+estimate a rate) turned up something the original 1,904-poster ground
+truth never isolated: **`title_ocr_qa_verdict`'s reliability depends
+heavily on the poster's language.**
+
+Blind human review, batched in rounds of 100-200, `es_poster`/
+`no_es_poster`/`no_seguro` (same schema as the original ground truth so
+results can be appended to it directly). By `original_language` (n=646
+scored across the first four rounds):
+
+| language | n | % actually `es_poster` (Nova was wrong) |
+|---|---:|---:|
+| zh | 29 | **89.7%** |
+| ja | 140 | **75.0%** |
+| es | 23 | 26.1% |
+| ko | 22 | 18.2% |
+| pt | 20 | 15.0% |
+| en | 263 | 12.9% |
+| fr | 17 | 11.8% |
+
+For English, the `no_title_on_poster` flag is fairly trustworthy -- only
+12.9% of English posters flagged that way turn out to be real posters
+Nova simply misread. For Japanese, **75%** are real posters Nova failed
+to read a title on; for Chinese, **90%**. This is the same pattern
+`poster-corpus-validation`'s own earlier finding described for
+Rekognition's OCR (Japanese titles disproportionately `es_poster`, 26.8%
+vs 6.9%) -- except Nova's vision-based title read turns out *worse* on
+non-Latin scripts than Rekognition's OCR was. Any downstream use of
+`title_ocr_qa_verdict` to filter non-poster images has to be
+language-aware, or it will disproportionately discard real Japanese and
+Chinese posters while correctly discarding mostly-English junk.
+
+**A free, local fix exists and was tested for real.** The private
+project already ran a comprehensive OCR/vision-model bake-off
+(`data/qa/ocr_pilot_v2/summary.csv`, 18 engines, n=100 -- gpt4o and
+Pixtral Large tie for best at 95% title-hit-rate, Nova Pro sits at 88%,
+Rekognition at 80%) but that comparison is 100% English-language posters
+-- CJK was never tested by any of it. PaddleOCR's PP-OCRv6 (`ppocrv6-medium`,
+already vendored and runnable fully offline, no AWS/cloud credentials
+needed) scored a mediocre 62% hit-rate on that English-only benchmark,
+but PP-OCRv6 is specifically built for Chinese-family scripts, so a
+30-poster spot-check ran it directly against real Japanese/Chinese
+`no_title_on_poster` posters this repo's own census flagged as Nova
+misses: **30/30 returned real, substantial detected text**, with several
+exact or near-exact title matches PaddleOCR caught Nova completely
+missed -- *Kokuhaku* (id 1469701) -> "コクハク" (exact), *Kaidan Shin
+Mimibukuro* (id 987129) -> "怪談新耳袋" (exact), *Sin and Evil* (id
+1214366) -> "罪悪" (exact translation match). Not perfect (id 890497,
+爱人再生, only returned a single unrelated character) but a clear,
+free, immediately-usable signal.
+
+**Applied as an automated rescue, not just a finding**: rather than send
+every remaining `ja`/`zh`/`cn` `no_title_on_poster` id (705 total) through
+manual blind review, `rescue_cjk_with_paddleocr.py` runs PP-OCRv6 on each,
+scores detected text against `original_title` (native-script CJK
+characters, not the ASCII-only tokenizer `ocr_metrics.py`'s
+`title_overlap_score` uses -- that function returns 0 on any CJK title by
+construction, so this uses a separate character-set-overlap scorer built
+for this), and auto-labels `es_poster` when overlap >= 0.5. Ids that
+don't clear that bar still go to manual review -- a PaddleOCR miss isn't
+proof of a real non-poster, just insufficient evidence to auto-confirm
+one. This cuts the manual review load for the CJK-heavy remainder of the
+census substantially, concentrated exactly where Nova's own reliability
+was already shown to be worst.
+
+The full census (all 4,879 `no_title_on_poster` ids resolved to a
+verdict, ground truth + all rounds + the CJK rescue) was still in
+progress at the time of this writing -- see `data/ground_truth/` for the
+current consolidated state once complete.
+
 **Net**: if the only reason to call Rekognition were presence-detection
 signals (animal/weapon/monster/water) or color/face-count, it would not
 be worth the cost -- free alternatives beat or tie it on every one of

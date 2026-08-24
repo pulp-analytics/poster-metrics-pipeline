@@ -70,6 +70,22 @@ the 145k-poster corpus outside the zero-OCR-text set entirely, but check
 that ground truth file first before spending a new AWS call re-answering
 a question 1,904 posters already have a real human answer for.
 
+**Second update -- a real language bias, worth knowing before this field
+is ever run at scale**: the census extending that ground truth (see
+docs/RESULTS.md, "Poster type census") found `title_ocr_qa_verdict` --
+the *same kind* of Nova vision judgment this `poster_qa_verdict` field
+is -- is right 87.1% of the time on English posters but wrong 75.0% of
+the time on Japanese ones and 89.7% of the time on Chinese ones (Nova
+misreads/misses the title far more on non-Latin scripts, the same shape
+of failure DINO/CLIP/YOLOv8n/rek_labels showed on domain mismatch
+elsewhere in this document, just triggered by script instead of art
+style). There's no reason to assume `poster_qa_verdict` is immune to the
+same bias once it actually runs -- treat any `not_poster` verdict from
+this field with extra skepticism on non-Latin-script posters specifically,
+and consider PP-OCRv6 (PaddleOCR, free, local, no AWS needed, real-tested
+in that same census on this corpus's own Japanese/Chinese posters) as a
+free secondary check before trusting a `not_poster` call on those.
+
 `labels`/`labels_top` (PENDING, also not in the real project's original
 prompt): a general open-vocabulary object/scene read, the direct
 counterpart to `26_rekognition_enrich.py`'s `rek_labels`/`rek_top`/
