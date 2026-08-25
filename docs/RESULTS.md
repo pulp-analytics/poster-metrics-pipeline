@@ -1100,11 +1100,36 @@ rescued were checked against the completed human census: **8/8 already
 carried a human `es_poster` verdict** -- a clean, independent
 confirmation that the AKA-augmented method adds real signal, not noise.
 
-`ml` and `bn` remain untested -- PaddleOCR has no language mapping for
-either; Tesseract (already installed, `tesseract --list-langs` shows
-only `eng` currently, but official `mal`/`ben` trained-data packs exist
-and aren't yet installed) is the next free option to try before
-reaching for a paid multi-language API like Google Cloud Vision.
+**`ml` (Malayalam) and `bn` (Bengali): both free options tried, both
+failed -- a real gap, not a shortcut.** PaddleOCR has no language mapping
+for either (confirmed from source, above). Tesseract was tried next
+(`mal`/`ben` official trained-data packs installed, ~6MB combined) and
+produced near-total noise on this corpus's stylized poster art -- 0/40
+(`ml`) and 1/40 (`bn`) hit rate, even with basic preprocessing
+(grayscale, 3x upscale, autocontrast) on a 15-poster spot-check; an
+English test title (`U-Turn`) on the same untouched pipeline also came
+back garbage, confirming the failure is about photographic poster
+images vs. Tesseract's scanned-document assumptions, not the scripts
+themselves. Google Cloud Vision would likely read both scripts well, but
+was deliberately not tried -- introducing a non-AWS vendor into an
+AWS-focused writeup to patch a 1%-of-corpus gap isn't the right trade,
+and the honest finding (AWS's own OCR tools plus every free local
+alternative tested all fail on these two scripts) is itself worth
+stating plainly rather than working around.
+
+Both engines having failed, the remaining 47 `no_title_on_poster` ids in
+these two languages (32 `ml` + 15 `bn` -- the entire population, not a
+sample) went to the same blind visual review used throughout this
+census: **not reading the script at all, just judging "is there a
+text/title mark on this image."** 42/47 (89.4%) do have real text Nova
+missed -- the same severity as `zh` (89.7%) and worse than `ja` (75.0%),
+confirming this is a non-Latin-script-wide failure mode, not a
+CJK-specific one. All 47 ids were already part of the completed
+4,879-poster census from earlier rounds; cross-checking this review
+against those existing verdicts found 46/47 exact agreement (one
+disagreement, id 609963 -- ordinary inter-rater noise on a borderline
+case, not a systematic issue) -- a clean independent consistency check
+on the census as a whole, not just new information about `ml`/`bn`.
 
 **Net**: if the only reason to call Rekognition were presence-detection
 signals (animal/weapon/monster/water) or color/face-count, it would not
