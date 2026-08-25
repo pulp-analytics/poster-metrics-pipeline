@@ -86,6 +86,43 @@ and consider PP-OCRv6 (PaddleOCR, free, local, no AWS needed, real-tested
 in that same census on this corpus's own Japanese/Chinese posters) as a
 free secondary check before trusting a `not_poster` call on those.
 
+**Third update -- the census is complete, and the bias is bigger and
+weirder than "non-Latin scripts" alone.** The full `no_title_on_poster`
+population (4,879 ids, not just the 1,904-poster ground-truth overlap)
+was resolved to a real verdict: 74.8% `no_es_poster`, close to the
+original ground truth's 73.1%. But tracing every real consumer of
+Rekognition's OCR text (not just this Nova pass) turned up a second,
+previously invisible population: **1,256 ids where Rekognition's OCR
+found zero characters, yet `title_ocr_qa_verdict` is `"accurate"` or
+`"inaccurate"` -- never `"no_title_on_poster"`** -- so they were excluded
+from every census round above by construction, despite sharing the exact
+failure mode. Blind human review of all 1,256: **91.4% (1,148/1,256) have
+a real title Nova completely missed.** The uncomfortable part: this
+isn't confined to non-Latin scripts the way the first update's numbers
+suggested -- the English/Latin-script slice of this same 1,256 population
+came back **85-86% wrong too**, nearly as bad as Japanese/Chinese/Tamil/
+Arabic/Hindi/Russian/etc. (88.5-96.6%). So the real mechanism isn't just
+"Nova reads non-Latin scripts poorly" -- it's that **whenever the
+underlying OCR evidence Nova is shown is empty, its verdict degrades
+toward noise regardless of script**, and the three-way `accurate`/
+`inaccurate`/`no_title_on_poster` split in `qa_title_ocr.py`'s prompt
+doesn't reliably separate "genuinely no title" from "title present, OCR
+and Nova both missed it." Corpus-wide, folding this in moves the
+`no_es_poster` estimate from 73.1%/74.8% down to **61.1%** across the
+now-6,135-poster combined census (`no_es_poster` 3,750, `es_poster`
+2,350, `no_seguro` 34).
+
+Direct implication for `poster_qa_verdict` once it runs: don't just
+apply extra skepticism to `not_poster` verdicts on non-Latin-script
+posters (the first update's advice, still correct as far as it goes) --
+apply it to *any* `not_poster` verdict where the poster also has thin or
+absent corroborating OCR evidence, in any script. A redesigned prompt
+that reads the poster directly instead of validating Rekognition's
+(possibly empty) OCR reading, and that separates "is there a text mark
+on this poster" from "does it match the catalog title" as two independent
+fields rather than one three-way verdict, avoids inheriting this failure
+mode structurally rather than needing a post-hoc confidence discount.
+
 `labels`/`labels_top` (PENDING, also not in the real project's original
 prompt): a general open-vocabulary object/scene read, the direct
 counterpart to `26_rekognition_enrich.py`'s `rek_labels`/`rek_top`/
