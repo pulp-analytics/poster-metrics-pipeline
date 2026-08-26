@@ -1142,6 +1142,132 @@ corpus). The real, defensible reasons to keep calling it are
 bonus signal once that call is already justified, not an independent
 reason to make it.
 
+### Local vision-LLMs on free GPU: a real fourth option, once two real bugs are understood
+
+The OCR work above compares pure detectors (Rekognition, PaddleOCR) against
+paid vision-LLM judgment (Nova, Pixtral). A third category was never
+tested in this repo: **open-weight vision-LLMs, self-hosted via Ollama,
+run for free on Google Colab's T4 GPU** -- zero marginal cost per poster
+beyond compute time, unlike Nova/Pixtral, and no script-support ceiling
+the way PaddleOCR has for `ml`/`bn`.
+
+**First, a hardware-reality check.** This work was first attempted on an
+8GB M1 Mac -- `ggml_metal_init` confirmed Metal *was* active, but
+`load_tensors: offloaded 18/37 layers to GPU` showed only half the model
+fit in the ~14MB of truly free memory available at the time
+(`memory_pressure`: 3,472 free pages of 16KB each). Every local model
+tested there ran 4-10x slower than the same model on a free Colab T4
+(16GB dedicated VRAM, full offload). **The lesson for anyone repeating
+this: a consumer laptop's "it has a GPU" is not the same claim as "the
+model fits in that GPU's usable memory" -- check `ollama ps` / the
+server log's `offloaded X/Y layers` line before trusting a timing
+number.**
+
+**Four models were attempted; two never produced usable output, and
+that's real, citable data too:**
+
+- **Llama 3.2 Vision** (`mllama` architecture): 100% blank responses on
+  40/40 English posters, confirmed identically via both `/api/generate`
+  (top-level `images` field) and `/api/chat` (`images` inside the
+  message) -- the two Ollama multimodal calling conventions. Neither
+  attaches the image correctly for this specific architecture in Ollama
+  0.32-0.33; this is a real, reproducible integration gap, not a prompt
+  problem.
+- **"Aya Vision" (Cohere)**: doesn't exist in Ollama's library at all.
+  `ollama pull aya-vision:8b` and the bare `aya-vision` both return
+  `Error: pull model manifest: file does not exist` -- confirmed via the
+  local Ollama CLI directly, not by trusting a web search (an earlier,
+  wrong assumption in this same investigation, corrected once actually
+  checked). `aya:8b` (Cohere's text-only Aya) does exist and pulls for
+  real, which is exactly why the mistake happened -- the tag looked
+  plausible. **Lesson institutionalized here**: verify a model tag with
+  `ollama pull <tag>` (cancel once real download bytes start moving) or
+  the model's own `ollama.com/library` page rendered live, never a raw
+  `curl | grep` on that page -- its tag list renders client-side and a
+  regex over the static HTML returns false positives (a "470b" tag was
+  matched this way, which isn't a real size anyone ships).
+
+**English baseline, same 40-poster sample and scorer as the pure-OCR
+comparison above (fuzzy/substring + AKAs):**
+
+| engine | easy (n=40) | hard: pre-1985 painted posters (n=40) |
+|---|---:|---:|
+| **MiniCPM-V** | **95.0%** | **92.5%** |
+| Rekognition | 87.5% | 85.0% |
+| PaddleOCR | 82.5% | 87.5% |
+
+A free, local 7.6B model beats Rekognition on English title reading, on
+both an easy sample and one deliberately selected for likely-harder
+typography (illustrated/painted key art, pre-1985 -- selected via
+`painted=1` from `medium.csv`, a signal independent of any OCR engine's
+own output, to avoid defining "hard" using one of the engines being
+compared). The "hard" sample's PaddleOCR score going *up* rather than
+down is itself informative: `painted`/`old` correlates with striking
+artwork, not necessarily with harder-to-read titles -- classic posters
+often carry large, bold, high-contrast lettering. Difficulty and vintage
+aren't the same axis.
+
+**Qwen2.5-VL:3b degenerates into garbage on real posters -- and this is
+a documented, cross-model phenomenon, not a one-off.** Across a
+360-poster run (9 non-Latin languages, 40 each), 281/360 (78.1%) of
+qwen2.5vl:3b's responses came back as a fixed-length run of `?`
+characters. The real diagnostic signal: every one of those 281 rows has
+**`done_reason` empty and `total_duration_ms` exactly `0.0`** in
+Ollama's own response -- not a high `eval_count` with a real multi-second
+duration, which is what a genuine repetition loop running to a token
+limit would look like. This means the request never completed Ollama's
+normal generation pipeline at all; the shape is consistent with a
+decode failure (the quantized 3B model emitting a token sequence that
+doesn't decode to valid UTF-8, most likely on non-Latin-script-heavy
+images, with the server substituting replacement characters and
+aborting rather than finishing generation). **This repo's own historical
+data corroborates the same failure mode in a completely different model
+and infrastructure stack**: `data/qa/ocr_kimi_hard/results.csv` (Kimi-VL,
+run pre-Ollama on EC2, part of the private pipeline's original hard-12
+benchmark) shows two rows -- ids `1405670` and `1483743` -- where the
+model output is a single phrase repeated for 2,000-3,000+ characters
+(`x x x x x...`, `UP HERE, UP HERE...`), each taking 130+ seconds versus
+2-7s for every other row in that file. Two independent model families,
+two independent serving stacks, the same generation-collapse signature
+on genuinely hard/ambiguous poster images.
+
+**Qwen2.5-VL:7b all but eliminates it**: the identical 360-poster run
+with the 7B checkpoint produced this failure on just 1/360 calls
+(0.3%). Model size/quantization aggressiveness, not Ollama or the
+prompt, is the real variable -- consistent with the private pipeline's
+own English bake-off, where "qwen" (a 2B checkpoint) already scored a
+respectable 0.93 title-hit-rate; the failure mode documented here is
+specific to going smaller (3B, more aggressively quantized for a 4-8GB
+memory budget), not to the Qwen-VL family in general.
+
+**Full four-way comparison, same 9-language samples and scorer used for
+PaddleOCR above (fuzzy/substring + AKAs; `qwen2.5vl:7b`'s 1 garbage row
+excluded from its own denominator, i.e. scored on 39/40 or all 40 where
+none occurred):**
+
+| language | **Qwen2.5-VL:7b** | MiniCPM-V | PaddleOCR |
+|---|---:|---:|---:|
+| ru | **92.5%** | 60.0% | 42.5% |
+| hi | **85.0%** | 85.0% | 60.0% |
+| ko | **82.5%** | 50.0% | 75.0% |
+| ar | **75.0%** | 30.0% | 40.0% |
+| th | **70.0%** | 60.0% | 35.0% |
+| ml | **57.5%** | 55.0% | n/a (unsupported) |
+| bn | **55.0%** | 35.0% | n/a (unsupported) |
+| ta | **47.5%** | 42.5% | 45.0% |
+| te | **47.5%** | 45.0% | 35.0% |
+
+Qwen2.5-VL:7b wins or ties on all nine, including the two languages
+where MiniCPM-V specifically lost to PaddleOCR (`ko`, `ar`) -- there's no
+language in this set where a paid or script-limited alternative beats
+the free, self-hosted 7B model once the 3B's decode-failure bug is
+worked around by sizing up. Combined with the English result above,
+**Qwen2.5-VL:7b run on a free Colab GPU is, on this repo's own testing,
+the strongest OCR/title-reading signal found in this entire
+investigation** -- ahead of Rekognition, PaddleOCR, MiniCPM-V, and (on
+the languages this repo could test against real human ground truth
+earlier in this document) ahead of Nova's own `title_ocr_qa_verdict`.
+
 ### Fire: a sixth signal, same shape as water
 
 Same overlap check that found the animal/weapon/monster/person/water
