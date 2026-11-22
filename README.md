@@ -7,7 +7,8 @@ medium/painted-vs-photo classification), perceptual quality scores
 geometric composition metrics.
 
 Part of the [Pulp Analytics](https://github.com/pulp-analytics) horror poster
-analysis project ("The Anatomy of Fear"). Corpus-scale runs are orchestrated
+analysis project, published as [What Fear Looks Like](https://pulpanalytics.com/) (working title:
+"The Anatomy of Fear"). Corpus-scale runs are orchestrated
 by [poster-analysis-infrastructure](https://github.com/pulp-analytics/poster-analysis-infrastructure);
 this repo is the code that image executes. See [Where this runs](#where-this-runs).
 
