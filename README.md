@@ -16,8 +16,10 @@ this repo is the code that image executes. See [Where this runs](#where-this-run
 Aggregating those per-poster metrics into charts/trends/decisions (e.g.
 the yearly brightness curve, the Continue/Pivot checkpoint, decade-level
 register shares) is a presentation concern for whatever consumes this
-data downstream, not something computed here — that logic will live in a
-separate front-end/presentation repo once one exists, not in this one.
+data downstream, not something computed here. That logic lives in the
+essay's own (private) repo and is published as
+[What Fear Looks Like](https://pulpanalytics.com/); see
+[How the published essay uses these outputs](#how-the-published-essay-uses-these-outputs).
 
 **Status: color, perceptual quality, CLIP semantic embeddings, SigLIP
 semantic embeddings, faces, geometric composition, depth, saliency,
@@ -27,12 +29,43 @@ pose, and creature/weapon detection are all built and documented
 Docs: [METHODOLOGY](docs/METHODOLOGY.md) · [SCHEMA](docs/SCHEMA.md) ·
 [RESULTS](docs/RESULTS.md) · [MODELS](docs/MODELS.md)
 
+- [How the published essay uses these outputs](#how-the-published-essay-uses-these-outputs)
 - [Where this runs](#where-this-runs)
 - [Quickstart](#quickstart)
 - [Join into one table](#joining-the-outputs-into-one-table)
 - [Structure](#structure)
 - [Contributing](CONTRIBUTING.md)
 - [License](#license)
+
+## How the published essay uses these outputs
+
+This repo computes many overlapping signals; the essay publishes each
+number from **one** owner, so a chart never mixes engines. Everything
+else is a QA note: it can flag a poster for review, but it never moves a
+published series.
+
+| Signal | What the essay publishes | From |
+|---|---|---|
+| Color | Six hue families (reds, oranges/yellows, greens, blues, purples, black/grey), near-black share, mean L* | `01` |
+| Faces | Share of posters with a face, face size | `14` (YuNet) |
+| Creatures | Monster census by decade: CLIP label with score ≥ 0.5, otherwise "uncertain" | `06` |
+| Medium | Painted vs photographic | `10` (`p_painted`) |
+| Text | Text-like coverage, read as a trend, not a font ID | `16` (MSER) |
+| Lettering | Ornate↔minimal register (quintiles within each genre's file; raw axis to compare genres) | `08` |
+| Composition | Symmetry, diagonals, thirds | `16` |
+
+QA notes, never votes: Nova (`22`–`24`, `27`), Rekognition labels
+(`26`), SigLIP (`11`–`13`), OWLv2/DINO boxes (`20`/`21`). The essay's
+census chart does show Nova as a second reader the visitor can switch
+to, labeled as such; the series and the text use CLIP. OWLv2 boxes are
+drawn on a poster's page only when their label matches the census
+label.
+
+The rule above for *per-poster* decisions ("is there an animal on this
+poster?", [Reconciling overlapping signals](#reconciling-overlapping-signals))
+answers a different question from the essay's *decade trends*: the
+essay keeps one model across the whole century so a change over time is
+not a change of engine.
 
 ## Where this runs
 
